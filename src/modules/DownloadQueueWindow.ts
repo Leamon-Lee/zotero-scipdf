@@ -47,8 +47,10 @@ export class DownloadQueueWindow {
         tag: "div",
         namespace: "html",
         styles: {
-          width: "760px",
-          height: "500px",
+          width: "100%",
+          minWidth: "900px",
+          height: "100%",
+          minHeight: "500px",
           overflow: "auto",
           padding: "12px",
           boxSizing: "border-box",
@@ -142,6 +144,11 @@ export class DownloadQueueWindow {
     if (!this.isInteractive() || !this.dialog) return;
     const body = this.dialog.window.document.getElementById(this.bodyID);
     if (!body) return;
+    const table = body.parentElement as HTMLTableElement | null;
+    if (table) {
+      table.style.width = "100%";
+      table.style.tableLayout = "fixed";
+    }
     while (body.firstChild) body.removeChild(body.firstChild);
 
     const groups: Array<[DownloadQueueStatus, string]> = [
@@ -185,6 +192,17 @@ export class DownloadQueueWindow {
         detailCell.textContent = entry.detail || entry.error || "";
         titleCell.title = entry.error || entry.url || "";
         detailCell.title = entry.error || "";
+        statusCell.style.width = "90px";
+        statusCell.style.whiteSpace = "nowrap";
+        titleCell.style.width = "38%";
+        detailCell.style.width = "42%";
+        actionCell.style.width = "110px";
+        actionCell.style.whiteSpace = "nowrap";
+        for (const cell of [statusCell, titleCell, detailCell, actionCell]) {
+          cell.style.padding = "8px";
+          cell.style.verticalAlign = "top";
+          cell.style.overflowWrap = "anywhere";
+        }
         row.append(statusCell, titleCell, detailCell, actionCell);
 
         if (status === "verification") {
