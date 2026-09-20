@@ -57,7 +57,8 @@ test("missing DOI still falls back to URL and preserves complete letter suffixes
 function harness(request) {
   const windows = [],
     calls = [],
-    imports = [];
+    imports = [],
+    launched = [];
   const ui = {
     ...Utils,
     extractDOIs: Utils.extractDOIs,
@@ -104,6 +105,7 @@ function harness(request) {
     {
       Zotero: {
         debug() {},
+        launchURL: (url) => launched.push(url),
         HTTP: {
           request: async (method, url, options) => {
             calls.push({ url, options });
@@ -119,18 +121,34 @@ function harness(request) {
     windows,
     calls,
     imports,
+    launched,
   };
 }
-const page = (status, found = false) => ({
+const page = (status, found = false, challenge = false) => ({
   status,
   statusText: String(status),
   responseXML: {
-    querySelector: (selector) =>
-      selector === "#pdf"
-        ? found
+    querySelector: (selector) => {
+      if (selector === "#pdf") {
+        return found
           ? { getAttribute: () => "https://pdf.example/test.pdf" }
-          : null
-        : { innerHTML: "Please try to search again using DOI" },
+          : null;
+      }
+      if (selector === "title") {
+        return { textContent: challenge ? "Sci-Hub: 你是机器人吗？" : "" };
+      }
+      if (selector === "body") {
+        return {
+          innerHTML: challenge
+            ? "你是机器人吗？不是 验证中 | 您是人类！"
+            : "Please try to search again using DOI",
+          textContent: challenge
+            ? "你是机器人吗？不是 验证中 | 您是人类！"
+            : "Please try to search again using DOI",
+        };
+      }
+      return null;
+    },
   },
 });
 test("502 advances to the next mirror with bounded requests and persistent progress", async () => {
@@ -148,6 +166,18 @@ test("502 advances to the next mirror with bounded requests and persistent progr
   assert.equal(h.windows[0].closed, true);
   assert.equal(h.windows.at(-1).title, "popwin-fetchsuccess");
   assert.equal(h.imports.length, 1);
+});
+test("200 verification pages open the mirror once and continue with the next mirror", async () => {
+  const h = harness(({ calls }) =>
+    calls.length === 1 ? page(200, false, true) : page(200, true),
+  );
+  await h.run([item()]);
+  assert.equal(h.calls.length, 2);
+  assert.deepEqual(h.launched, [
+    "https://a.example/10.1038/s41567-025-02822-y",
+  ]);
+  assert.equal(h.imports.length, 1);
+  assert.equal(h.windows.at(-1).title, "popwin-fetchsuccess");
 });
 test("click cancellation aborts the request and stops remaining mirrors and items", async () => {
   let aborted = false;

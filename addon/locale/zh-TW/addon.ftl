@@ -12,3 +12,4 @@ popwin-cancelhint = 點擊取消後續下載。已開始的附件匯入可能仍
 popwin-fetchprogress = 文獻 { $item }/{ $items }，鏡像 { $mirror }/{ $mirrors }：{ $host } — { $title }
 popwin-cancelled = 已取消
 popwin-fetchfailed = 下載失敗，請檢查網路、鏡像可用性及除錯日誌
+popwin-verification = 鏡像需要人工驗證，已在瀏覽器中開啟。完成驗證後請重新取得該項目。

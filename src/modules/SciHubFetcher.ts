@@ -10,6 +10,14 @@ class PDFNotFoundError extends Error {
   }
 }
 
+class VerificationRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VerificationRequiredError";
+    Object.setPrototypeOf(this, VerificationRequiredError.prototype);
+  }
+}
+
 export class SciHubFetcher {
   private static readonly pdfNotAvailableRegexes = [
     /Please try to search again using DOI/im,
@@ -45,6 +53,8 @@ export class SciHubFetcher {
     };
     // Do not retry a throttled host again in this batch.
     const throttledHosts = new Set<string>();
+    // Verification is user-gated. Avoid reopening the same host for every item.
+    const verificationHosts = new Set<string>();
     for (const [itemIndex, item] of filtered.entries()) {
       if (state.cancelled) break;
       const scihubUrls = await this.buildSciHubURLs(item);
@@ -72,10 +82,15 @@ export class SciHubFetcher {
       };
       let success = false;
       let allNotFound = true;
+      let verificationRequired = false;
       try {
         for (const [mirrorIndex, scihubUrl] of scihubUrls.entries()) {
           if (state.cancelled) break;
           if (throttledHosts.has(scihubUrl.host)) {
+            allNotFound = false;
+            continue;
+          }
+          if (verificationHosts.has(scihubUrl.host)) {
             allNotFound = false;
             continue;
           }
@@ -98,6 +113,20 @@ export class SciHubFetcher {
             break;
           } catch (error) {
             if (state.cancelled) break;
+            if (error instanceof VerificationRequiredError) {
+              allNotFound = false;
+              verificationRequired = true;
+              verificationHosts.add(scihubUrl.host);
+              try {
+                // Open the challenge for the user. Never solve or submit it automatically.
+                Zotero.launchURL(scihubUrl.href);
+              } catch (launchError) {
+                Zotero.debug(
+                  `[Sci-PDF] failed to open verification page: ${String(launchError)}`,
+                );
+              }
+              continue;
+            }
             const status = (error as { status?: number } | null)?.status;
             if (status === 429 || status === 503)
               throttledHosts.add(scihubUrl.host);
@@ -119,9 +148,11 @@ export class SciHubFetcher {
         getString(
           success
             ? "popwin-fetchsuccess"
-            : allNotFound
-              ? "popwin-pdfnotavaliable"
-              : "popwin-fetchfailed",
+            : verificationRequired
+              ? "popwin-verification"
+              : allNotFound
+                ? "popwin-pdfnotavaliable"
+                : "popwin-fetchfailed",
         ),
         item.getDisplayTitle(),
         success ? "success" : "fail",
@@ -184,6 +215,11 @@ export class SciHubFetcher {
         status: xhr.status,
       });
     }
+    if (this.isVerificationPage(xhr.responseXML)) {
+      throw new VerificationRequiredError(
+        `Human verification required at ${scihubUrl.host}`,
+      );
+    }
     const rawPDFUrl = xhr.responseXML
       ?.querySelector("#pdf")
       ?.getAttribute("src");
@@ -210,5 +246,22 @@ export class SciHubFetcher {
       return true;
     }
     return this.pdfNotAvailableRegexes.some((regex) => regex.test(innerHTML));
+  }
+
+  private static isVerificationPage(document?: Document | null): boolean {
+    if (!document) return false;
+    const title = document.querySelector("title")?.textContent ?? "";
+    const body = document.querySelector("body")?.textContent ?? "";
+    const hasChallengeElement = Boolean(
+      document.querySelector(
+        "#captcha, [id*='captcha' i], iframe[src*='captcha' i], iframe[src*='challenge' i]",
+      ),
+    );
+    return (
+      hasChallengeElement ||
+      /captcha|are you (a )?robot|verify (that )?you('|’)?re human|human verification|你是机器人|验证码|验证中|人类验证/i.test(
+        `${title}\n${body}`,
+      )
+    );
   }
 }
