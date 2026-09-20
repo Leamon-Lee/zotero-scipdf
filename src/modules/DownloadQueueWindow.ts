@@ -196,6 +196,7 @@ export class DownloadQueueWindow {
           button.addEventListener("click", () => this.onVerify(entry));
           actionCell.appendChild(button);
         }
+        body.appendChild(row);
       }
     }
   }
