@@ -31,6 +31,7 @@ export class DownloadQueueWindow {
   constructor(
     private readonly entries: DownloadQueueEntry[],
     private readonly onVerify: (entry: DownloadQueueEntry) => void,
+    private readonly onImport: (entry: DownloadQueueEntry) => void,
   ) {}
 
   open(): boolean {
@@ -216,11 +217,12 @@ export class DownloadQueueWindow {
             this.onVerify(entry);
           });
           actionCell.appendChild(button);
-        } else if (status === "failed" && entry.url) {
+        }
+        if (status === "verification" || status === "failed") {
           const button = this.dialog.window.document.createElement("button");
           button.type = "button";
-          button.textContent = getString("queue-retry");
-          button.addEventListener("click", () => this.onVerify(entry));
+          button.textContent = getString("queue-import");
+          button.addEventListener("click", () => this.onImport(entry));
           actionCell.appendChild(button);
         }
         body.appendChild(row);

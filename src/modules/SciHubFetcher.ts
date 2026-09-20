@@ -48,6 +48,8 @@ export class SciHubFetcher {
 
     const queue = new DownloadQueueWindow(queueEntries, (entry) => {
       void this.startVerification(entry, queue);
+    }, (entry) => {
+      void this.importLocalPDF(entry, queue);
     });
 
     const filtered: Zotero.Item[] = [];
@@ -368,6 +370,38 @@ export class SciHubFetcher {
       title: entry.item.getField("title"),
       contentType: "application/pdf",
     });
+  }
+
+  private static async importLocalPDF(
+    entry: DownloadQueueEntry,
+    queue: DownloadQueueWindow,
+  ) {
+    try {
+      const path = await new ztoolkit.FilePicker(
+        getString("queue-import-title"),
+        "open",
+        [[getString("queue-import-filter"), "*.pdf"]],
+      ).open();
+      if (!path) return;
+      await Zotero.Attachments.importFromFile({
+        file: path,
+        libraryID: entry.item.libraryID,
+        parentItemID: entry.item.id,
+        title: entry.item.getField("title"),
+        contentType: "application/pdf",
+      });
+      entry.status = "downloaded";
+      entry.verificationStarted = false;
+      entry.error = undefined;
+      entry.detail = getString("popwin-fetchsuccess");
+      queue.update(entry);
+    } catch (error) {
+      entry.status = "failed";
+      entry.verificationStarted = false;
+      entry.error = String(error);
+      entry.detail = String(error);
+      queue.update(entry);
+    }
   }
 
   private static async buildSciHubURLs(item: Zotero.Item): Promise<URL[]> {
