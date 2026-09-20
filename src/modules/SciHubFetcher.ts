@@ -1,10 +1,7 @@
 import { getString } from "../utils/locale";
 import { Utils } from "../utils/utils";
 import { CustomResolverManager } from "./CustomResolverManager";
-import {
-  DownloadQueueEntry,
-  DownloadQueueWindow,
-} from "./DownloadQueueWindow";
+import { DownloadQueueEntry, DownloadQueueWindow } from "./DownloadQueueWindow";
 
 class PDFNotFoundError extends Error {
   constructor(message: string) {
@@ -46,11 +43,15 @@ export class SciHubFetcher {
       queueEntryByItem.set(item, queueEntries[index]),
     );
 
-    const queue = new DownloadQueueWindow(queueEntries, (entry) => {
-      void this.startVerification(entry, queue);
-    }, (entry) => {
-      void this.importLocalPDF(entry, queue);
-    });
+    const queue = new DownloadQueueWindow(
+      queueEntries,
+      (entry) => {
+        void this.startVerification(entry, queue);
+      },
+      (entry) => {
+        void this.importLocalPDF(entry, queue);
+      },
+    );
 
     const filtered: Zotero.Item[] = [];
     for (const item of regularItems) {
@@ -58,9 +59,7 @@ export class SciHubFetcher {
       let hasPDF = false;
       if (skipIfExistPDF && typeof item.getBestAttachment === "function") {
         const attachment = await item.getBestAttachment();
-        hasPDF = Boolean(
-          attachment && attachment.isPDFAttachment(),
-        );
+        hasPDF = Boolean(attachment && attachment.isPDFAttachment());
       }
       if (hasPDF) {
         entry!.status = "downloaded";
@@ -266,102 +265,69 @@ export class SciHubFetcher {
     if (!entry.url || entry.verificationStarted) return;
     entry.status = "verification";
     entry.verificationStarted = true;
+    entry.error = undefined;
+    entry.detail = getString("queue-verification-opening");
     queue.update(entry);
 
     try {
-      // The user completes the challenge in the browser. We only retry the
-      // normal PDF request afterwards; no challenge is solved automatically.
-      Zotero.launchURL(entry.url);
+      // Zotero 7's visible document viewer uses the same CookieSandbox for the
+      // challenge page and the resulting PDF request. Its MIME handler captures
+      // the PDF blob as soon as it appears, so no polling of an external browser
+      // or manual file import is required after the user completes the challenge.
+      await this.downloadPDFViaVerificationViewer(entry);
+      entry.status = "downloaded";
+      entry.verificationStarted = false;
+      entry.error = undefined;
+      entry.detail = getString("popwin-fetchsuccess");
+      queue.update(entry);
     } catch (error) {
-      entry.status = "failed";
+      Zotero.debug(`[Sci-PDF] verification viewer: ${String(error)}`);
+      entry.status = "verification";
       entry.verificationStarted = false;
       entry.error = String(error);
-      entry.detail = String(error);
+      entry.detail = /User closed the document viewer/i.test(String(error))
+        ? getString("queue-verification-closed")
+        : String(error);
       queue.update(entry);
-      return;
     }
-
-    // Poll for a short, bounded period. This works when the browser challenge
-    // grants a host/IP clearance visible to Zotero's HTTP client. If the
-    // browser keeps a separate cookie jar, the row remains available for a
-    // manual retry or Zotero Connector import.
-    const maxAttempts = 24;
-    let browserFallbackTried = false;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      await new Promise((resolve) =>
-        ztoolkit.getGlobal("setTimeout")(resolve, 5000),
-      );
-      if (!queue.isInteractive()) return;
-      const state = { cancelled: false, cancelRequest: undefined } as {
-        cancelled: boolean;
-        cancelRequest?: () => void;
-      };
-      try {
-        await this.fetchPDF(new URL(entry.url), entry.item, state);
-        if (state.cancelled) return;
-        entry.status = "downloaded";
-        entry.verificationStarted = false;
-        entry.error = undefined;
-        entry.detail = getString("popwin-fetchsuccess");
-        queue.update(entry);
-        return;
-      } catch (error) {
-        if (error instanceof VerificationRequiredError) continue;
-        if (
-          !browserFallbackTried &&
-          this.isBrowserDownloadFallbackError(error)
-        ) {
-          browserFallbackTried = true;
-          entry.detail = getString("queue-browser-download");
-          queue.update(entry);
-          try {
-            await this.downloadPDFViaBrowser(entry);
-            entry.status = "downloaded";
-            entry.verificationStarted = false;
-            entry.error = undefined;
-            entry.detail = getString("popwin-fetchsuccess");
-            queue.update(entry);
-            return;
-          } catch (browserError) {
-            entry.error = String(browserError);
-            entry.detail = String(browserError);
-            queue.update(entry);
-          }
-          continue;
-        }
-        entry.status = "failed";
-        entry.verificationStarted = false;
-        entry.error = String(error);
-        entry.detail = String(error);
-        queue.update(entry);
-        return;
-      }
-    }
-    entry.status = "failed";
-    entry.verificationStarted = false;
-    entry.error = getString("queue-verification-timeout");
-    entry.detail = getString("queue-verification-timeout");
-    queue.update(entry);
   }
 
-  private static isBrowserDownloadFallbackError(error: unknown): boolean {
-    const status = (error as { status?: number } | null)?.status;
-    return status === 0 || /HTTP 0/i.test(String(error));
-  }
-
-  private static async downloadPDFViaBrowser(entry: DownloadQueueEntry) {
+  private static async downloadPDFViaVerificationViewer(
+    entry: DownloadQueueEntry,
+  ) {
     if (!entry.url) throw new Error("Verification URL is missing");
+
+    const zotero = Zotero as typeof Zotero & {
+      BrowserDownload?: {
+        downloadPDFViaViewer?: (
+          url: string,
+          path: string,
+          options: { cookieSandbox?: Zotero.CookieSandbox },
+        ) => Promise<void>;
+      };
+    };
+    const downloadPDFViaViewer =
+      zotero.BrowserDownload?.downloadPDFViaViewer?.bind(
+        zotero.BrowserDownload,
+      );
+    if (!downloadPDFViaViewer) {
+      throw new Error(getString("queue-verification-unsupported"));
+    }
+
     const directory =
       await Zotero.Attachments.createTemporaryStorageDirectory();
     const file = directory.clone();
     file.append(`sci-pdf-${entry.item.id}-${Date.now()}.pdf`);
-    const downloaded = await Zotero.Attachments.downloadPDFViaBrowser(
-      entry.url,
-      file.path,
-      {},
-    );
-    if (!downloaded || !file.exists() || file.fileSize <= 0) {
-      throw new Error("Zotero browser did not return a PDF file");
+    const CookieSandbox = (
+      Zotero as unknown as {
+        CookieSandbox: new () => Zotero.CookieSandbox;
+      }
+    ).CookieSandbox;
+    const cookieSandbox = new CookieSandbox();
+
+    await downloadPDFViaViewer(entry.url, file.path, { cookieSandbox });
+    if (!file.exists() || file.fileSize <= 0) {
+      throw new Error("Zotero verification viewer did not return a PDF file");
     }
     await Zotero.Attachments.importFromFile({
       file,

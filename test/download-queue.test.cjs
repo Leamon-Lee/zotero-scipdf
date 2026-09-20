@@ -252,3 +252,98 @@ test("all mirrors explicitly missing the PDF produce the not-found result", asyn
   assert.equal(h.calls.length, 2);
   assert.equal(h.windows.at(-1).title, "popwin-pdfnotavaliable");
 });
+
+function verificationHarness(downloadPDFViaViewer) {
+  const imports = [];
+  const updates = [];
+  const file = {
+    path: "C:/Temp/sci-pdf-test.pdf",
+    fileSize: 1024,
+    append(name) {
+      this.path = `C:/Temp/${name}`;
+    },
+    exists: () => true,
+  };
+  class CookieSandbox {}
+  const { SciHubFetcher } = load(
+    "../src/modules/SciHubFetcher.ts",
+    {
+      "../utils/locale": { getString: (key) => key },
+      "../utils/utils": { Utils: {} },
+      "./CustomResolverManager": {
+        CustomResolverManager: { shared: { customResolvers: [] } },
+      },
+      "./DownloadQueueWindow": { DownloadQueueWindow: class {} },
+    },
+    {
+      Zotero: {
+        debug() {},
+        CookieSandbox,
+        BrowserDownload: { downloadPDFViaViewer },
+        Attachments: {
+          createTemporaryStorageDirectory: async () => ({
+            clone: () => file,
+          }),
+          importFromFile: async (options) => imports.push(options),
+        },
+      },
+      ztoolkit: { log() {} },
+    },
+  );
+  const entry = {
+    id: "0",
+    item: {
+      id: 42,
+      libraryID: 1,
+      getField: () => "Learning a manifold of fonts",
+    },
+    title: "Learning a manifold of fonts",
+    status: "verification",
+    url: "https://sci-hub.example/10.1145/2601097.2601212",
+  };
+  const queue = {
+    update(value) {
+      updates.push({ ...value });
+    },
+  };
+  return {
+    run: () => SciHubFetcher.startVerification(entry, queue),
+    entry,
+    imports,
+    updates,
+    CookieSandbox,
+  };
+}
+
+test("verification uses Zotero's visible viewer and automatically imports the captured PDF", async () => {
+  let viewerCall;
+  const h = verificationHarness(async (url, path, options) => {
+    viewerCall = { url, path, options };
+  });
+  await h.run();
+  assert.equal(
+    viewerCall.url,
+    "https://sci-hub.example/10.1145/2601097.2601212",
+  );
+  assert.equal(viewerCall.path.endsWith(".pdf"), true);
+  assert.equal(
+    viewerCall.options.cookieSandbox instanceof h.CookieSandbox,
+    true,
+  );
+  assert.equal(h.imports.length, 1);
+  assert.equal(h.imports[0].parentItemID, 42);
+  assert.equal(h.entry.status, "downloaded");
+  assert.equal(h.entry.verificationStarted, false);
+  assert.equal(h.entry.detail, "popwin-fetchsuccess");
+});
+
+test("closing the verification viewer leaves the row retryable", async () => {
+  const h = verificationHarness(async () => {
+    throw new Error("BrowserDownload: User closed the document viewer");
+  });
+  await h.run();
+  assert.equal(h.imports.length, 0);
+  assert.equal(h.entry.status, "verification");
+  assert.equal(h.entry.verificationStarted, false);
+  assert.equal(h.entry.detail, "queue-verification-closed");
+});

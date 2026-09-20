@@ -39,6 +39,9 @@ export type FluentMessageId =
   | 'queue-status-pending'
   | 'queue-status-verification'
   | 'queue-title'
+  | 'queue-verification-closed'
+  | 'queue-verification-opening'
   | 'queue-verification-timeout'
+  | 'queue-verification-unsupported'
   | 'queue-verify'
   | 'queue-verifying';
