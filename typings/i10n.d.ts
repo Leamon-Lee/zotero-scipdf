@@ -22,6 +22,7 @@ export type FluentMessageId =
   | 'pref-scihub-input'
   | 'pref-title'
   | 'prefs-title'
+  | 'queue-browser-download'
   | 'queue-close'
   | 'queue-column-action'
   | 'queue-column-detail'

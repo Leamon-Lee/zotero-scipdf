@@ -29,3 +29,4 @@ queue-retry = Retry
 queue-close = Close
 queue-empty = None
 queue-verification-timeout = Verification did not make the mirror available within the retry window.
+queue-browser-download = HTTP 0 received; trying Zotero's browser PDF downloader…

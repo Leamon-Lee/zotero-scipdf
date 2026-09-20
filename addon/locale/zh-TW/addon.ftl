@@ -29,3 +29,4 @@ queue-retry = 重試
 queue-close = 關閉
 queue-empty = 無
 queue-verification-timeout = 在重試時間內仍未偵測到驗證通過，請使用瀏覽器或 Zotero Connector 手動儲存 PDF。
+queue-browser-download = 收到 HTTP 0，正在嘗試使用 Zotero 瀏覽器下載 PDF…

@@ -284,6 +284,7 @@ export class SciHubFetcher {
     // browser keeps a separate cookie jar, the row remains available for a
     // manual retry or Zotero Connector import.
     const maxAttempts = 24;
+    let browserFallbackTried = false;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await new Promise((resolve) =>
         ztoolkit.getGlobal("setTimeout")(resolve, 5000),
@@ -304,6 +305,28 @@ export class SciHubFetcher {
         return;
       } catch (error) {
         if (error instanceof VerificationRequiredError) continue;
+        if (
+          !browserFallbackTried &&
+          this.isBrowserDownloadFallbackError(error)
+        ) {
+          browserFallbackTried = true;
+          entry.detail = getString("queue-browser-download");
+          queue.update(entry);
+          try {
+            await this.downloadPDFViaBrowser(entry);
+            entry.status = "downloaded";
+            entry.verificationStarted = false;
+            entry.error = undefined;
+            entry.detail = getString("popwin-fetchsuccess");
+            queue.update(entry);
+            return;
+          } catch (browserError) {
+            entry.error = String(browserError);
+            entry.detail = String(browserError);
+            queue.update(entry);
+          }
+          continue;
+        }
         entry.status = "failed";
         entry.verificationStarted = false;
         entry.error = String(error);
@@ -317,6 +340,34 @@ export class SciHubFetcher {
     entry.error = getString("queue-verification-timeout");
     entry.detail = getString("queue-verification-timeout");
     queue.update(entry);
+  }
+
+  private static isBrowserDownloadFallbackError(error: unknown): boolean {
+    const status = (error as { status?: number } | null)?.status;
+    return status === 0 || /HTTP 0/i.test(String(error));
+  }
+
+  private static async downloadPDFViaBrowser(entry: DownloadQueueEntry) {
+    if (!entry.url) throw new Error("Verification URL is missing");
+    const directory =
+      await Zotero.Attachments.createTemporaryStorageDirectory();
+    const file = directory.clone();
+    file.append(`sci-pdf-${entry.item.id}-${Date.now()}.pdf`);
+    const downloaded = await Zotero.Attachments.downloadPDFViaBrowser(
+      entry.url,
+      file.path,
+      {},
+    );
+    if (!downloaded || !file.exists() || file.fileSize <= 0) {
+      throw new Error("Zotero browser did not return a PDF file");
+    }
+    await Zotero.Attachments.importFromFile({
+      file,
+      libraryID: entry.item.libraryID,
+      parentItemID: entry.item.id,
+      title: entry.item.getField("title"),
+      contentType: "application/pdf",
+    });
   }
 
   private static async buildSciHubURLs(item: Zotero.Item): Promise<URL[]> {
