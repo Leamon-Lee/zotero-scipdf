@@ -24,6 +24,7 @@ export type FluentMessageId =
   | 'prefs-title'
   | 'queue-close'
   | 'queue-column-action'
+  | 'queue-column-detail'
   | 'queue-column-status'
   | 'queue-column-title'
   | 'queue-empty'

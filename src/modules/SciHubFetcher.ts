@@ -67,7 +67,7 @@ export class SciHubFetcher {
       }
     }
 
-    queue.open();
+    const interactiveQueue = queue.open();
     queueEntries.forEach((entry) => queue.update(entry));
 
     if (filtered.length <= 0) return;
@@ -88,21 +88,34 @@ export class SciHubFetcher {
         if (queueEntry) {
           queueEntry.status = "failed";
           queueEntry.error = getString("popwin-doimissing");
+          queueEntry.detail = getString("popwin-doimissing");
           queue.update(queueEntry);
         }
-        Utils.showPopWin(
-          getString("popwin-doimissing"),
-          item.getDisplayTitle(),
-          "fail",
-        );
+        if (!interactiveQueue) {
+          Utils.showPopWin(
+            getString("popwin-doimissing"),
+            item.getDisplayTitle(),
+            "fail",
+          );
+        }
         continue;
       }
-      const win = Utils.showPopWin(
-        getString("popwin-fetching"),
-        item.getDisplayTitle(),
-        "default",
-        0,
-      );
+      if (queueEntry) {
+        queueEntry.detail = getString("popwin-fetching");
+        queue.update(queueEntry);
+      }
+      const win = interactiveQueue
+        ? {
+            addDescription() {},
+            changeLine() {},
+            win: { close() {} },
+          }
+        : Utils.showPopWin(
+            getString("popwin-fetching"),
+            item.getDisplayTitle(),
+            "default",
+            0,
+          );
       win.addDescription(getString("popwin-cancelhint"));
       const close = win.win.close.bind(win.win);
       // Zotero's close-on-click calls this method. Programmatic cleanup uses close directly.
@@ -138,12 +151,26 @@ export class SciHubFetcher {
             }),
             progress: (mirrorIndex / scihubUrls.length) * 100,
           });
+          if (queueEntry) {
+            queueEntry.detail = getString("popwin-fetchprogress", {
+              args: {
+                item: itemIndex + 1,
+                items: filtered.length,
+                mirror: mirrorIndex + 1,
+                mirrors: scihubUrls.length,
+                host: scihubUrl.host,
+                title: item.getDisplayTitle(),
+              },
+            });
+            queue.update(queueEntry);
+          }
           try {
             await this.fetchPDF(scihubUrl, item, state);
             success = !state.cancelled;
             if (success && queueEntry) {
               queueEntry.status = "downloaded";
               queueEntry.url = scihubUrl.href;
+              queueEntry.detail = getString("popwin-fetchsuccess");
               queue.update(queueEntry);
             }
             break;
@@ -156,6 +183,7 @@ export class SciHubFetcher {
                 queueEntry.status = "verification";
                 queueEntry.url ??= scihubUrl.href;
                 queueEntry.error = String(error);
+                queueEntry.detail = getString("popwin-verification");
                 queue.update(queueEntry);
               }
               if (!queue.isInteractive()) {
@@ -177,6 +205,8 @@ export class SciHubFetcher {
             allNotFound &&= error instanceof PDFNotFoundError;
             if (queueEntry) {
               queueEntry.error = String(error);
+              queueEntry.detail = String(error);
+              queue.update(queueEntry);
             }
             Zotero.debug(`[Sci-PDF] ${scihubUrl.href}: ${String(error)}`);
           } finally {
@@ -188,26 +218,41 @@ export class SciHubFetcher {
         close();
       }
       if (state.cancelled) {
-        Utils.showPopWin(getString("popwin-cancelled"), item.getDisplayTitle());
+        if (queueEntry) {
+          queueEntry.status = "failed";
+          queueEntry.detail = getString("popwin-cancelled");
+          queue.update(queueEntry);
+        }
+        if (!interactiveQueue) {
+          Utils.showPopWin(
+            getString("popwin-cancelled"),
+            item.getDisplayTitle(),
+          );
+        }
         break;
       }
-      Utils.showPopWin(
-        getString(
-          success
-            ? "popwin-fetchsuccess"
-            : verificationRequired
-              ? "popwin-verification"
-              : allNotFound
-                ? "popwin-pdfnotavaliable"
-                : "popwin-fetchfailed",
-        ),
-        item.getDisplayTitle(),
-        success ? "success" : "fail",
-        5000,
-      );
       if (!success && !verificationRequired && queueEntry) {
         queueEntry.status = "failed";
+        queueEntry.detail = getString(
+          allNotFound ? "popwin-pdfnotavaliable" : "popwin-fetchfailed",
+        );
         queue.update(queueEntry);
+      }
+      if (!interactiveQueue) {
+        Utils.showPopWin(
+          getString(
+            success
+              ? "popwin-fetchsuccess"
+              : verificationRequired
+                ? "popwin-verification"
+                : allNotFound
+                  ? "popwin-pdfnotavaliable"
+                  : "popwin-fetchfailed",
+          ),
+          item.getDisplayTitle(),
+          success ? "success" : "fail",
+          5000,
+        );
       }
     }
   }
@@ -229,6 +274,7 @@ export class SciHubFetcher {
       entry.status = "failed";
       entry.verificationStarted = false;
       entry.error = String(error);
+      entry.detail = String(error);
       queue.update(entry);
       return;
     }
@@ -253,6 +299,7 @@ export class SciHubFetcher {
         entry.status = "downloaded";
         entry.verificationStarted = false;
         entry.error = undefined;
+        entry.detail = getString("popwin-fetchsuccess");
         queue.update(entry);
         return;
       } catch (error) {
@@ -260,6 +307,7 @@ export class SciHubFetcher {
         entry.status = "failed";
         entry.verificationStarted = false;
         entry.error = String(error);
+        entry.detail = String(error);
         queue.update(entry);
         return;
       }
@@ -267,6 +315,7 @@ export class SciHubFetcher {
     entry.status = "failed";
     entry.verificationStarted = false;
     entry.error = getString("queue-verification-timeout");
+    entry.detail = getString("queue-verification-timeout");
     queue.update(entry);
   }
 

@@ -21,6 +21,7 @@ queue-status-verification = 待验证
 queue-status-failed = 失败
 queue-column-status = 状态
 queue-column-title = 文章
+queue-column-detail = 详情
 queue-column-action = 操作
 queue-verify = 验证
 queue-verifying = 验证中…

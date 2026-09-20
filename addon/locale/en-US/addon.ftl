@@ -21,6 +21,7 @@ queue-status-verification = Awaiting verification
 queue-status-failed = Failed
 queue-column-status = Status
 queue-column-title = Item
+queue-column-detail = Details
 queue-column-action = Action
 queue-verify = Verify
 queue-verifying = Verifying…

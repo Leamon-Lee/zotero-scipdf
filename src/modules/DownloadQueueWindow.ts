@@ -13,6 +13,7 @@ export interface DownloadQueueEntry {
   status: DownloadQueueStatus;
   url?: string;
   error?: string;
+  detail?: string;
   verificationStarted?: boolean;
 }
 
@@ -89,6 +90,11 @@ export class DownloadQueueWindow {
                       {
                         tag: "th",
                         namespace: "html",
+                        properties: { textContent: getString("queue-column-detail") },
+                      },
+                      {
+                        tag: "th",
+                        namespace: "html",
                         properties: { textContent: getString("queue-column-action") },
                       },
                     ],
@@ -150,7 +156,7 @@ export class DownloadQueueWindow {
       );
       const heading = this.dialog.window.document.createElement("tr");
       const headingCell = this.dialog.window.document.createElement("td");
-      headingCell.colSpan = 3;
+      headingCell.colSpan = 4;
       headingCell.textContent = `${label} (${groupEntries.length})`;
       headingCell.style.fontWeight = "bold";
       headingCell.style.backgroundColor = "var(--material-background)";
@@ -160,7 +166,7 @@ export class DownloadQueueWindow {
       if (groupEntries.length === 0) {
         const row = this.dialog.window.document.createElement("tr");
         const cell = this.dialog.window.document.createElement("td");
-        cell.colSpan = 3;
+        cell.colSpan = 4;
         cell.textContent = getString("queue-empty");
         cell.style.color = "GrayText";
         row.appendChild(cell);
@@ -172,11 +178,14 @@ export class DownloadQueueWindow {
         const row = this.dialog.window.document.createElement("tr");
         const statusCell = this.dialog.window.document.createElement("td");
         const titleCell = this.dialog.window.document.createElement("td");
+        const detailCell = this.dialog.window.document.createElement("td");
         const actionCell = this.dialog.window.document.createElement("td");
         statusCell.textContent = label;
         titleCell.textContent = entry.title;
+        detailCell.textContent = entry.detail || entry.error || "";
         titleCell.title = entry.error || entry.url || "";
-        row.append(statusCell, titleCell, actionCell);
+        detailCell.title = entry.error || "";
+        row.append(statusCell, titleCell, detailCell, actionCell);
 
         if (status === "verification") {
           const button = this.dialog.window.document.createElement("button");
