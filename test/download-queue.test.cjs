@@ -101,6 +101,20 @@ function harness(request) {
           },
         },
       },
+      "./DownloadQueueWindow": {
+        DownloadQueueWindow: class {
+          constructor() {
+            this.interactive = false;
+          }
+          open() {
+            return false;
+          }
+          isInteractive() {
+            return this.interactive;
+          }
+          update() {}
+        },
+      },
     },
     {
       Zotero: {

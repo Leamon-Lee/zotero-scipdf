@@ -1,6 +1,10 @@
 import { getString } from "../utils/locale";
 import { Utils } from "../utils/utils";
 import { CustomResolverManager } from "./CustomResolverManager";
+import {
+  DownloadQueueEntry,
+  DownloadQueueWindow,
+} from "./DownloadQueueWindow";
 
 class PDFNotFoundError extends Error {
   constructor(message: string) {
@@ -28,24 +32,45 @@ export class SciHubFetcher {
     items: Zotero.Item[],
     skipIfExistPDF: boolean = true,
   ) {
+    const regularItems = items.filter((item) => item.isRegularItem());
+    const queueEntries: DownloadQueueEntry[] = regularItems.map(
+      (item, index) => ({
+        id: `${index}`,
+        item,
+        title: item.getDisplayTitle(),
+        status: "pending",
+      }),
+    );
+    const queueEntryByItem = new Map<Zotero.Item, DownloadQueueEntry>();
+    regularItems.forEach((item, index) =>
+      queueEntryByItem.set(item, queueEntries[index]),
+    );
+
+    const queue = new DownloadQueueWindow(queueEntries, (entry) => {
+      void this.startVerification(entry, queue);
+    });
+
     const filtered: Zotero.Item[] = [];
-    for (const item of items) {
-      if (!item.isRegularItem()) {
-        continue;
+    for (const item of regularItems) {
+      const entry = queueEntryByItem.get(item);
+      let hasPDF = false;
+      if (skipIfExistPDF && typeof item.getBestAttachment === "function") {
+        const attachment = await item.getBestAttachment();
+        hasPDF = Boolean(
+          attachment && attachment.isPDFAttachment(),
+        );
       }
-      if (!skipIfExistPDF) {
-        filtered.push(item);
-        continue;
-      }
-      const attachment = await item.getBestAttachment();
-      if (!attachment || !attachment.isPDFAttachment()) {
+      if (hasPDF) {
+        entry!.status = "downloaded";
+      } else {
         filtered.push(item);
       }
     }
 
-    if (filtered.length <= 0) {
-      return;
-    }
+    queue.open();
+    queueEntries.forEach((entry) => queue.update(entry));
+
+    if (filtered.length <= 0) return;
 
     const state = {
       cancelled: false,
@@ -58,7 +83,13 @@ export class SciHubFetcher {
     for (const [itemIndex, item] of filtered.entries()) {
       if (state.cancelled) break;
       const scihubUrls = await this.buildSciHubURLs(item);
+      const queueEntry = queueEntryByItem.get(item);
       if (!scihubUrls.length) {
+        if (queueEntry) {
+          queueEntry.status = "failed";
+          queueEntry.error = getString("popwin-doimissing");
+          queue.update(queueEntry);
+        }
         Utils.showPopWin(
           getString("popwin-doimissing"),
           item.getDisplayTitle(),
@@ -110,27 +141,43 @@ export class SciHubFetcher {
           try {
             await this.fetchPDF(scihubUrl, item, state);
             success = !state.cancelled;
+            if (success && queueEntry) {
+              queueEntry.status = "downloaded";
+              queueEntry.url = scihubUrl.href;
+              queue.update(queueEntry);
+            }
             break;
           } catch (error) {
             if (state.cancelled) break;
             if (error instanceof VerificationRequiredError) {
               allNotFound = false;
               verificationRequired = true;
-              verificationHosts.add(scihubUrl.host);
-              try {
-                // Open the challenge for the user. Never solve or submit it automatically.
-                Zotero.launchURL(scihubUrl.href);
-              } catch (launchError) {
-                Zotero.debug(
-                  `[Sci-PDF] failed to open verification page: ${String(launchError)}`,
-                );
+              if (queueEntry) {
+                queueEntry.status = "verification";
+                queueEntry.url ??= scihubUrl.href;
+                queueEntry.error = String(error);
+                queue.update(queueEntry);
               }
+              if (!queue.isInteractive()) {
+                try {
+                  // Fallback for environments without the interactive queue.
+                  Zotero.launchURL(scihubUrl.href);
+                } catch (launchError) {
+                  Zotero.debug(
+                    `[Sci-PDF] failed to open verification page: ${String(launchError)}`,
+                  );
+                }
+              }
+              verificationHosts.add(scihubUrl.host);
               continue;
             }
             const status = (error as { status?: number } | null)?.status;
             if (status === 429 || status === 503)
               throttledHosts.add(scihubUrl.host);
             allNotFound &&= error instanceof PDFNotFoundError;
+            if (queueEntry) {
+              queueEntry.error = String(error);
+            }
             Zotero.debug(`[Sci-PDF] ${scihubUrl.href}: ${String(error)}`);
           } finally {
             state.cancelRequest = undefined;
@@ -158,7 +205,69 @@ export class SciHubFetcher {
         success ? "success" : "fail",
         5000,
       );
+      if (!success && !verificationRequired && queueEntry) {
+        queueEntry.status = "failed";
+        queue.update(queueEntry);
+      }
     }
+  }
+
+  private static async startVerification(
+    entry: DownloadQueueEntry,
+    queue: DownloadQueueWindow,
+  ) {
+    if (!entry.url || entry.verificationStarted) return;
+    entry.status = "verification";
+    entry.verificationStarted = true;
+    queue.update(entry);
+
+    try {
+      // The user completes the challenge in the browser. We only retry the
+      // normal PDF request afterwards; no challenge is solved automatically.
+      Zotero.launchURL(entry.url);
+    } catch (error) {
+      entry.status = "failed";
+      entry.verificationStarted = false;
+      entry.error = String(error);
+      queue.update(entry);
+      return;
+    }
+
+    // Poll for a short, bounded period. This works when the browser challenge
+    // grants a host/IP clearance visible to Zotero's HTTP client. If the
+    // browser keeps a separate cookie jar, the row remains available for a
+    // manual retry or Zotero Connector import.
+    const maxAttempts = 24;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise((resolve) =>
+        ztoolkit.getGlobal("setTimeout")(resolve, 5000),
+      );
+      if (!queue.isInteractive()) return;
+      const state = { cancelled: false, cancelRequest: undefined } as {
+        cancelled: boolean;
+        cancelRequest?: () => void;
+      };
+      try {
+        await this.fetchPDF(new URL(entry.url), entry.item, state);
+        if (state.cancelled) return;
+        entry.status = "downloaded";
+        entry.verificationStarted = false;
+        entry.error = undefined;
+        queue.update(entry);
+        return;
+      } catch (error) {
+        if (error instanceof VerificationRequiredError) continue;
+        entry.status = "failed";
+        entry.verificationStarted = false;
+        entry.error = String(error);
+        queue.update(entry);
+        return;
+      }
+    }
+    entry.status = "failed";
+    entry.verificationStarted = false;
+    entry.error = getString("queue-verification-timeout");
+    queue.update(entry);
   }
 
   private static async buildSciHubURLs(item: Zotero.Item): Promise<URL[]> {
