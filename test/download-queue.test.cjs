@@ -253,7 +253,10 @@ test("all mirrors explicitly missing the PDF produce the not-found result", asyn
   assert.equal(h.windows.at(-1).title, "popwin-pdfnotavaliable");
 });
 
-function verificationHarness(downloadPDFViaViewer) {
+function verificationHarness(
+  downloadPDFViaViewer,
+  browserAPI = "BrowserDownload",
+) {
   const imports = [];
   const updates = [];
   const file = {
@@ -279,7 +282,7 @@ function verificationHarness(downloadPDFViaViewer) {
       Zotero: {
         debug() {},
         CookieSandbox,
-        BrowserDownload: { downloadPDFViaViewer },
+        [browserAPI]: { downloadPDFViaViewer },
         Attachments: {
           createTemporaryStorageDirectory: async () => ({
             clone: () => file,
@@ -346,4 +349,15 @@ test("closing the verification viewer leaves the row retryable", async () => {
   assert.equal(h.entry.status, "verification");
   assert.equal(h.entry.verificationStarted, false);
   assert.equal(h.entry.detail, "queue-verification-closed");
+});
+
+test("verification uses Zotero 10 BrowserRequest when available", async () => {
+  let viewerCall;
+  const h = verificationHarness(async (url, path) => {
+    viewerCall = { url, path };
+  }, "BrowserRequest");
+  await h.run();
+  assert.equal(viewerCall.url, h.entry.url);
+  assert.equal(h.imports.length, 1);
+  assert.equal(h.entry.status, "downloaded");
 });

@@ -298,6 +298,9 @@ export class SciHubFetcher {
     if (!entry.url) throw new Error("Verification URL is missing");
 
     const zotero = Zotero as typeof Zotero & {
+      BrowserRequest?: {
+        downloadPDFViaViewer?: (url: string, path: string) => Promise<void>;
+      };
       BrowserDownload?: {
         downloadPDFViaViewer?: (
           url: string,
@@ -306,26 +309,30 @@ export class SciHubFetcher {
         ) => Promise<void>;
       };
     };
-    const downloadPDFViaViewer =
-      zotero.BrowserDownload?.downloadPDFViaViewer?.bind(
-        zotero.BrowserDownload,
-      );
-    if (!downloadPDFViaViewer) {
-      throw new Error(getString("queue-verification-unsupported"));
-    }
-
+    const browserRequest = zotero.BrowserRequest;
+    const browserDownload = zotero.BrowserDownload;
     const directory =
       await Zotero.Attachments.createTemporaryStorageDirectory();
     const file = directory.clone();
     file.append(`sci-pdf-${entry.item.id}-${Date.now()}.pdf`);
-    const CookieSandbox = (
-      Zotero as unknown as {
-        CookieSandbox: new () => Zotero.CookieSandbox;
-      }
-    ).CookieSandbox;
-    const cookieSandbox = new CookieSandbox();
 
-    await downloadPDFViaViewer(entry.url, file.path, { cookieSandbox });
+    if (browserRequest?.downloadPDFViaViewer) {
+      await browserRequest.downloadPDFViaViewer(entry.url, file.path);
+    } else if (browserDownload?.downloadPDFViaViewer) {
+      // Zotero 7.0.x used BrowserDownload and accepted a CookieSandbox.
+      const CookieSandbox = (
+        Zotero as unknown as {
+          CookieSandbox: new () => Zotero.CookieSandbox;
+        }
+      ).CookieSandbox;
+      const cookieSandbox = new CookieSandbox();
+      await browserDownload.downloadPDFViaViewer(entry.url, file.path, {
+        cookieSandbox,
+      });
+    } else {
+      throw new Error(getString("queue-verification-unsupported"));
+    }
+
     if (!file.exists() || file.fileSize <= 0) {
       throw new Error("Zotero verification viewer did not return a PDF file");
     }
